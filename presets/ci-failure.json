@@ -1,0 +1,30 @@
+{
+  "name": "ci-failure",
+  "description": "Sort CI failures by cause: code, flaky, infra, dependency, config or other.",
+  "state_template": {"job": "{meta.job}", "log": "{text}"},
+  "threshold": 0.8,
+  "questions": [
+    {
+      "id": "cause",
+      "type": "choice",
+      "prompt": "What caused this CI failure?",
+      "options": {
+        "code": {
+          "covers": "The change under test is wrong: a failing assertion, compile, type or lint error.",
+          "not": "A test that fails only sometimes."
+        },
+        "flaky": {
+          "covers": "A test that fails only sometimes: timing, races, test order, random data.",
+          "not": "The CI machine or a network service failing."
+        },
+        "infra": {
+          "covers": "The CI machine or a service failed: lost runner, out of disk or memory, network, registry or rate limit errors.",
+          "not": "A problem in the code or tests."
+        },
+        "dependency": "A new or changed version of a third-party package or tool broke the build.",
+        "config": "The CI configuration, secrets or environment variables are wrong or missing.",
+        "other": "The log fits none of the causes above."
+      }
+    }
+  ]
+}

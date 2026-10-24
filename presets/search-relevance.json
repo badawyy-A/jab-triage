@@ -1,0 +1,18 @@
+{
+  "name": "search-relevance",
+  "description": "Rate how well a search result answers its query: unrelated, on topic, or answers it.",
+  "state_template": {"query": "{meta.query}", "title": "{meta.title}", "result": "{text}"},
+  "threshold": 0.8,
+  "questions": [
+    {
+      "id": "relevance",
+      "type": "score",
+      "prompt": "How well does this result answer the query?",
+      "options": [
+        "The result is about something else, or only shares words with the query.",
+        "The result is on the query's topic but does not help answer it.",
+        "The result answers the query, or gives a part of the answer the asker needs."
+      ]
+    }
+  ]
+}

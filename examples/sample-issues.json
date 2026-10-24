@@ -1,0 +1,22 @@
+[
+  {"id": 1, "text": "Running `app export --format csv` on a project with 10k rows crashes with MemoryError. Worked fine in 2.3, broke after upgrading to 2.4.", "meta": {"title": "CSV export crashes on large projects"}},
+  {"id": 2, "text": "It would be great to have a dark theme for the settings page. Right now it is very bright at night.", "meta": {"title": "Dark mode for settings"}},
+  {"id": 3, "text": "How do I set the config path when running inside Docker? I tried APP_CONFIG but it seems to be ignored.", "meta": {"title": "Config path in Docker?"}},
+  {"id": 4, "text": "The README says to run `make setup`, but there is no setup target in the Makefile anymore.", "meta": {"title": "README install steps are out of date"}},
+  {"id": 5, "text": "Clicking Save twice quickly creates two copies of the same record.", "meta": {"title": "Double click on Save duplicates records"}},
+  {"id": 6, "text": "Please add an option to export reports as PDF in addition to CSV.", "meta": {"title": "PDF export"}},
+  {"id": 7, "text": "Bump version to 3.1.0 and update the changelog for the release.", "meta": {"title": "Release 3.1.0"}},
+  {"id": 8, "text": "Since this morning the login page shows a blank screen in Firefox 131. Chrome works. Console shows TypeError: x is undefined.", "meta": {"title": "Blank login page in Firefox"}},
+  {"id": 9, "text": "Is there a way to run the importer without the GUI? I want to schedule it with cron.", "meta": {"title": "Headless importer"}},
+  {"id": 10, "text": "The API docs list a `limit` parameter for /search but the endpoint ignores it and always returns 50 results.", "meta": {"title": "/search ignores limit"}},
+  {"id": 11, "text": "The tutorial page links to a video that no longer exists.", "meta": {"title": "Broken link in tutorial"}},
+  {"id": 12, "text": "When the timezone is set to UTC+13 the calendar shows events one day late.", "meta": {"title": "Events shifted a day in UTC+13"}},
+  {"id": 13, "text": "Can we support SSO with Okta? Our company requires it before we can roll this out.", "meta": {"title": "Okta SSO support"}},
+  {"id": 14, "text": "Why does the sync take 10 minutes? Is that expected for 2 GB of data or is something wrong on my side?", "meta": {"title": "Sync is slow"}},
+  {"id": 15, "text": "Tests fail on Windows because paths are joined with a forward slash in utils/paths.py.", "meta": {"title": "Path handling breaks on Windows"}},
+  {"id": 16, "text": "Let us discuss whether we should drop Python 3.9 support in the next major version.", "meta": {"title": "Drop Python 3.9?"}},
+  {"id": 17, "text": "Search should rank exact title matches above partial matches. Today a partial match in the body often comes first.", "meta": {"title": "Rank exact title matches higher"}},
+  {"id": 18, "text": "The docstring for parse_date says it returns a datetime, but it returns a string.", "meta": {"title": "Wrong return type in parse_date docs"}},
+  {"id": 19, "text": "After the last update notifications stopped arriving on Android. Not sure if this is a bug or a setting I missed.", "meta": {"title": "No notifications on Android"}},
+  {"id": 20, "text": "Add a --dry-run flag to the migrate command so we can see what would change.", "meta": {"title": "Dry run for migrate"}}
+]
