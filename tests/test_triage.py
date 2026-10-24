@@ -2,7 +2,7 @@ import logging
 
 import pytest
 
-from jab_triage.backends.base import BackendError
+from jab_triage.backends.base import BackendError, FatalBackendError
 from jab_triage.presets import parse_preset
 from jab_triage.triage import (
     CONFIDENT,
@@ -192,3 +192,15 @@ def test_confidence_is_rounded_before_bucketing():
     # 1 - 0.33 is 0.6699999999999999 in floats.
     _, result = run_script({"a": {"kind": ("bug", 0.9), "dup": (0.33,)}}, ["a"])
     assert result.items[0].answers["dup"]["confidence"] == 0.67
+
+
+def test_fatal_error_stops_the_run():
+    script = {
+        "a": {"kind": ("bug", 0.9), "dup": (0.9,)},
+        "b": FatalBackendError("HTTP 401 from stub: the key was rejected"),
+        "c": {"kind": ("bug", 0.9), "dup": (0.9,)},
+    }
+    backend = ScriptedBackend(script)
+    with pytest.raises(FatalBackendError, match="401"):
+        run(backend, PRESET, items("a", "b", "c"))
+    assert "c" not in backend.calls

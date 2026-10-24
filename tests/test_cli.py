@@ -3,7 +3,7 @@ import json
 import pytest
 
 from jab_triage import cli
-from jab_triage.backends.base import BackendError
+from jab_triage.backends.base import BackendError, FatalBackendError
 from tests.stub import ScriptedBackend
 from tests.test_presets import VALID
 
@@ -165,3 +165,13 @@ def test_debug_logs_item_text(workspace, capsys):
     script = {"private words": {"kind": ("bug", 0.9)}}
     assert cli.main([*args, "--debug"], stub_factory(script)) == 0
     assert "private words" in capsys.readouterr().err
+
+
+def test_fatal_error_exits_without_writing_results(workspace, capsys):
+    items = write_items(workspace / "items.json", ["a", "b"])
+    out = workspace / "out"
+    script = {"a": FatalBackendError("HTTP 401 from stub: key rejected"), "b": {}}
+    args = ["triage", "--preset", "kinds", "--input", str(items), "--out", str(out)]
+    assert cli.main(args, stub_factory(script)) == 1
+    assert "HTTP 401" in capsys.readouterr().err
+    assert not out.exists()

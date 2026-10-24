@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from jab_triage.backends.base import Answer, Backend, BackendError, Decision
+from jab_triage.backends.base import Answer, Backend, BackendError, Decision, FatalBackendError
 from jab_triage.cost import CostTally
 from jab_triage.presets import Preset, render_state
 
@@ -144,7 +144,10 @@ def run(
     max_state_bytes: int = DEFAULT_MAX_STATE_BYTES,
     debug: bool = False,
 ) -> RunResult:
-    """Ask about every item. A failed item goes to review; the rest carry on."""
+    """Ask about every item. A failed item goes to review; the rest carry on.
+
+    A FatalBackendError, like a rejected key, stops the run and is raised.
+    """
     if threshold is None:
         threshold = preset.threshold
     result = RunResult(
@@ -187,6 +190,9 @@ def ask_one(
 
     try:
         decision = backend.decide(state, preset.questions)
+    except FatalBackendError:
+        # Every later item would fail the same way, so stop instead of trying them all.
+        raise
     except BackendError as exc:
         return _failed(item, str(exc)), None
     except Exception as exc:
