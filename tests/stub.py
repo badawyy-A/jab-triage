@@ -12,6 +12,7 @@ from jab_triage.backends.base import Answer, Backend, Decision, Usage
 
 class ScriptedBackend(Backend):
     name = "stub"
+    destination = "nowhere (test stub)"
 
     def __init__(self, script, model="stub-model", cost=0.001):
         self.script = script

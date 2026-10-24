@@ -17,6 +17,10 @@ class BackendError(Exception):
     """A call failed. The message must never contain the API key or item text."""
 
 
+class FatalBackendError(BackendError):
+    """A failure every later call would hit too, like a rejected key. Stops the run."""
+
+
 @dataclass(frozen=True)
 class Answer:
     type: str
@@ -46,6 +50,8 @@ class Decision:
 
 class Backend(ABC):
     name: str
+    # Where requests go, shown to the user before anything is sent.
+    destination: str
 
     @abstractmethod
     def decide(self, state: Any, questions: tuple[Question, ...]) -> Decision:
