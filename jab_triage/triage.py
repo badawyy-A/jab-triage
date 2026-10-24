@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -23,6 +25,7 @@ NEEDS_REVIEW = "needs_review"
 # Above roughly this many bytes of text, OpenRouter sends Jev requests to the
 # slower, less accurate long-context mode. See docs/jev-api-notes.md.
 DEFAULT_MAX_STATE_BYTES = 32_000
+DEFAULT_AUDIT_RATE = 0.05
 
 _ITEM_KEYS = {"id", "text", "meta"}
 
@@ -187,6 +190,58 @@ def ask_one(
     confidence = min(a["confidence"] for a in answers.values())
     bucket = CONFIDENT if confidence >= threshold else NEEDS_REVIEW
     return ItemResult(item["id"], answers, confidence, bucket), decision
+
+
+@dataclass
+class TriageResult:
+    confident: list[ItemResult]
+    needs_review: list[ItemResult]
+    # A random sample of confident items, for the agent to check Jev against.
+    audit: list[ItemResult]
+    summary: dict
+
+
+def triage(
+    backend: Backend,
+    preset: Preset,
+    items: list[dict],
+    threshold: float | None = None,
+    audit_rate: float = DEFAULT_AUDIT_RATE,
+    seed: int | None = None,
+    max_state_bytes: int = DEFAULT_MAX_STATE_BYTES,
+    debug: bool = False,
+) -> TriageResult:
+    """Run every item, then sample confident ones for audit.
+
+    Without a seed one is drawn at random. It goes in the summary either way, so
+    any run's audit sample can be reproduced.
+    """
+    if seed is None:
+        seed = random.SystemRandom().randrange(2**32)
+    result = run(backend, preset, items, threshold, max_state_bytes, debug)
+    confident = result.in_bucket(CONFIDENT)
+    audit = sample_audit(confident, audit_rate, seed)
+    summary = result.summary()
+    summary.update({"audit_rate": audit_rate, "seed": seed, "audit": len(audit)})
+    return TriageResult(
+        confident=confident,
+        needs_review=result.in_bucket(NEEDS_REVIEW),
+        audit=audit,
+        summary=summary,
+    )
+
+
+def sample_audit(confident: list, rate: float, seed: int) -> list:
+    """Pick rate * len(confident) items, rounded up, keeping their input order.
+
+    Rounding up means any non-zero rate audits at least one item.
+    """
+    if not confident or rate <= 0:
+        return []
+    # Round before ceil so that 60 * 0.05, which is 3.0000000000000004 in floats, gives 3.
+    k = min(len(confident), math.ceil(round(len(confident) * rate, 9)))
+    chosen = sorted(random.Random(seed).sample(range(len(confident)), k))
+    return [confident[i] for i in chosen]
 
 
 def _failed(item: dict, error: str) -> ItemResult:
