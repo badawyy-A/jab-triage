@@ -34,6 +34,9 @@ from jab_triage.triage import (
 
 BackendFactory = Callable[[Mapping[str, str]], Backend]
 
+# Exit code when a run stopped before sending because --yes was not given.
+NEEDS_CONFIRMATION = 3
+
 
 def main(argv: list[str] | None = None, backend_factory: BackendFactory = from_env) -> int:
     args = build_parser().parse_args(argv)
@@ -91,6 +94,11 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"calls in flight at once (default: {DEFAULT_CONCURRENCY})",
     )
     run_options.add_argument(
+        "--yes",
+        action="store_true",
+        help="send the items; without it jab only says what it would send, and where",
+    )
+    run_options.add_argument(
         "--debug", action="store_true", help="log what is sent, including item text"
     )
 
@@ -132,6 +140,8 @@ def cmd_presets(args: argparse.Namespace, backend_factory: BackendFactory) -> in
 def cmd_ask(args: argparse.Namespace, backend_factory: BackendFactory) -> int:
     preset, items = load_run_inputs(args)
     backend = backend_factory(os.environ)
+    if not confirm_send(args, backend, preset, items):
+        return NEEDS_CONFIRMATION
     result = run(
         backend,
         preset,
@@ -151,6 +161,8 @@ def cmd_ask(args: argparse.Namespace, backend_factory: BackendFactory) -> int:
 def cmd_triage(args: argparse.Namespace, backend_factory: BackendFactory) -> int:
     preset, items = load_run_inputs(args)
     backend = backend_factory(os.environ)
+    if not confirm_send(args, backend, preset, items):
+        return NEEDS_CONFIRMATION
     result = triage(
         backend,
         preset,
@@ -174,6 +186,31 @@ def cmd_triage(args: argparse.Namespace, backend_factory: BackendFactory) -> int
     (out / "summary.json").write_text(summary + "\n", encoding="utf-8")
     print(summary)
     return 0
+
+
+def confirm_send(
+    args: argparse.Namespace, backend: Backend, preset: Preset, items: list[dict]
+) -> bool:
+    """Say what will be sent and where, before the first call. Goes ahead only
+    with --yes. The notice shows the template, never any item text."""
+    if not items:
+        return True
+    where = f"{backend.destination} ({backend.name}, model {backend.model})"
+    count = f"{len(items)} item{'' if len(items) == 1 else 's'}"
+    if args.yes:
+        print(f"jab: sending {count} to {where}", file=sys.stderr)
+        return True
+    template = json.dumps(preset.state_template, ensure_ascii=False)
+    print(
+        f"jab: this run would send {count} to {where}.\n"
+        f"jab: each call carries one item, filled into this template from preset "
+        f"{preset.name!r}, plus the preset's questions:\n"
+        f"jab:   {template}\n"
+        "jab: item ids, and meta fields the template does not use, are not sent.\n"
+        "jab: nothing has been sent. Run again with --yes to send.",
+        file=sys.stderr,
+    )
+    return False
 
 
 def print_presets() -> bool:

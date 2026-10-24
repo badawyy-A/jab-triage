@@ -50,8 +50,9 @@ class Decision:
 
 class Backend(ABC):
     name: str
-    # Where requests go, shown to the user before anything is sent.
+    # Where requests go and the model asked for, shown before anything is sent.
     destination: str
+    model: str
 
     @abstractmethod
     def decide(self, state: Any, questions: tuple[Question, ...]) -> Decision:

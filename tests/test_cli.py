@@ -69,7 +69,18 @@ def test_triage_writes_all_four_files(workspace, capsys):
     script = {t: {"kind": ("bug", 0.9 if i < 8 else 0.2)} for i, t in enumerate(texts)}
     items = write_items(workspace / "items.json", texts)
     out = workspace / "out"
-    args = ["triage", "--preset", "kinds", "--input", str(items), "--out", str(out), "--seed", "1"]
+    args = [
+        "triage",
+        "--yes",
+        "--preset",
+        "kinds",
+        "--input",
+        str(items),
+        "--out",
+        str(out),
+        "--seed",
+        "1",
+    ]
     assert cli.main(args, stub_factory(script)) == 0
 
     confident = read_jsonl(out / "confident.jsonl")
@@ -98,7 +109,7 @@ def test_ask_writes_one_results_file(workspace, capsys):
     items = write_items(workspace / "items.json", ["a", "b"])
     out = workspace / "results.jsonl"
     script = {"a": {"kind": ("bug", 0.9)}, "b": {"kind": ("feature", 0.5)}}
-    args = ["ask", "--preset", "kinds", "--input", str(items), "--out", str(out)]
+    args = ["ask", "--yes", "--preset", "kinds", "--input", str(items), "--out", str(out)]
     assert cli.main(args, stub_factory(script)) == 0
     confident, review = read_jsonl(out)
     assert confident["bucket"] == "confident"
@@ -112,13 +123,22 @@ def test_preset_can_be_a_path(workspace, tmp_path, capsys):
     preset_path.write_text(json.dumps(PRESET))
     items = write_items(workspace / "items.json", ["a"])
     out = workspace / "results.jsonl"
-    args = ["ask", "--preset", str(preset_path), "--input", str(items), "--out", str(out)]
+    args = ["ask", "--yes", "--preset", str(preset_path), "--input", str(items), "--out", str(out)]
     assert cli.main(args, stub_factory({"a": {"kind": ("bug", 0.9)}})) == 0
 
 
 def test_missing_backend_is_a_clear_error(workspace, capsys):
     items = write_items(workspace / "items.json", ["a"])
-    args = ["ask", "--preset", "kinds", "--input", str(items), "--out", str(workspace / "r")]
+    args = [
+        "ask",
+        "--yes",
+        "--preset",
+        "kinds",
+        "--input",
+        str(items),
+        "--out",
+        str(workspace / "r"),
+    ]
     assert cli.main(args) == 1
     assert "JEV_BACKEND is not set" in capsys.readouterr().err
 
@@ -126,14 +146,32 @@ def test_missing_backend_is_a_clear_error(workspace, capsys):
 def test_bad_input_is_a_clear_error(workspace, capsys):
     items = workspace / "items.json"
     items.write_text('{"not": "a list"}')
-    args = ["ask", "--preset", "kinds", "--input", str(items), "--out", str(workspace / "r")]
+    args = [
+        "ask",
+        "--yes",
+        "--preset",
+        "kinds",
+        "--input",
+        str(items),
+        "--out",
+        str(workspace / "r"),
+    ]
     assert cli.main(args, stub_factory({})) == 1
     assert "JSON array" in capsys.readouterr().err
 
 
 def test_unknown_preset_is_a_clear_error(workspace, capsys):
     items = write_items(workspace / "items.json", ["a"])
-    args = ["ask", "--preset", "nope", "--input", str(items), "--out", str(workspace / "r")]
+    args = [
+        "ask",
+        "--yes",
+        "--preset",
+        "nope",
+        "--input",
+        str(items),
+        "--out",
+        str(workspace / "r"),
+    ]
     assert cli.main(args, stub_factory({})) == 1
     assert "no preset named 'nope'" in capsys.readouterr().err
 
@@ -141,7 +179,7 @@ def test_unknown_preset_is_a_clear_error(workspace, capsys):
 @pytest.mark.parametrize("flag, value", [("--threshold", "1.5"), ("--max-bytes", "0")])
 def test_rejects_bad_numbers(workspace, flag, value):
     items = write_items(workspace / "items.json", ["a"])
-    args = ["ask", "--preset", "kinds", "--input", str(items), "--out", "r", flag, value]
+    args = ["ask", "--yes", "--preset", "kinds", "--input", str(items), "--out", "r", flag, value]
     with pytest.raises(SystemExit):
         cli.main(args, stub_factory({}))
 
@@ -150,7 +188,7 @@ def test_item_text_stays_out_of_output_without_debug(workspace, capsys):
     items = write_items(workspace / "items.json", ["private words", "more private words"])
     script = {"private words": BackendError("HTTP 500 from backend"), "more private words": {}}
     out = workspace / "out"
-    args = ["triage", "--preset", "kinds", "--input", str(items), "--out", str(out)]
+    args = ["triage", "--yes", "--preset", "kinds", "--input", str(items), "--out", str(out)]
     assert cli.main(args, stub_factory(script)) == 0
     captured = capsys.readouterr()
     assert "HTTP 500" in captured.err
@@ -161,7 +199,16 @@ def test_item_text_stays_out_of_output_without_debug(workspace, capsys):
 
 def test_debug_logs_item_text(workspace, capsys):
     items = write_items(workspace / "items.json", ["private words"])
-    args = ["ask", "--preset", "kinds", "--input", str(items), "--out", str(workspace / "r")]
+    args = [
+        "ask",
+        "--yes",
+        "--preset",
+        "kinds",
+        "--input",
+        str(items),
+        "--out",
+        str(workspace / "r"),
+    ]
     script = {"private words": {"kind": ("bug", 0.9)}}
     assert cli.main([*args, "--debug"], stub_factory(script)) == 0
     assert "private words" in capsys.readouterr().err
@@ -171,7 +218,38 @@ def test_fatal_error_exits_without_writing_results(workspace, capsys):
     items = write_items(workspace / "items.json", ["a", "b"])
     out = workspace / "out"
     script = {"a": FatalBackendError("HTTP 401 from stub: key rejected"), "b": {}}
-    args = ["triage", "--preset", "kinds", "--input", str(items), "--out", str(out)]
+    args = ["triage", "--yes", "--preset", "kinds", "--input", str(items), "--out", str(out)]
     assert cli.main(args, stub_factory(script)) == 1
     assert "HTTP 401" in capsys.readouterr().err
     assert not out.exists()
+
+
+def test_without_yes_nothing_is_sent(workspace, capsys):
+    items = write_items(workspace / "items.json", ["private words", "b"])
+    backend = ScriptedBackend({})
+    out = workspace / "out"
+    args = ["triage", "--preset", "kinds", "--input", str(items), "--out", str(out)]
+    assert cli.main(args, lambda env: backend) == cli.NEEDS_CONFIRMATION
+    assert backend.calls == []
+    assert not out.exists()
+    err = capsys.readouterr().err
+    assert "would send 2 items to nowhere (test stub) (stub, model stub-model)" in err
+    assert '"{text}"' in err
+    assert "Run again with --yes" in err
+    assert "private" not in err
+
+
+def test_with_yes_the_destination_is_still_named(workspace, capsys):
+    items = write_items(workspace / "items.json", ["a"])
+    out = workspace / "r.jsonl"
+    args = ["ask", "--yes", "--preset", "kinds", "--input", str(items), "--out", str(out)]
+    assert cli.main(args, stub_factory({"a": {"kind": ("bug", 0.9)}})) == 0
+    assert "sending 1 item to nowhere (test stub)" in capsys.readouterr().err
+
+
+def test_empty_input_needs_no_confirmation(workspace, capsys):
+    items = write_items(workspace / "items.json", [])
+    out = workspace / "out"
+    args = ["triage", "--preset", "kinds", "--input", str(items), "--out", str(out)]
+    assert cli.main(args, stub_factory({})) == 0
+    assert (out / "summary.json").exists()
