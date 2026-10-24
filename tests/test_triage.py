@@ -202,5 +202,5 @@ def test_fatal_error_stops_the_run():
     }
     backend = ScriptedBackend(script)
     with pytest.raises(FatalBackendError, match="401"):
-        run(backend, PRESET, items("a", "b", "c"))
+        run(backend, PRESET, items("a", "b", "c"), concurrency=1)
     assert "c" not in backend.calls

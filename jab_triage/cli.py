@@ -23,6 +23,7 @@ from jab_triage.presets import (
 )
 from jab_triage.triage import (
     DEFAULT_AUDIT_RATE,
+    DEFAULT_CONCURRENCY,
     DEFAULT_MAX_STATE_BYTES,
     NEEDS_REVIEW,
     InputError,
@@ -84,6 +85,12 @@ def build_parser() -> argparse.ArgumentParser:
         f"(default: {DEFAULT_MAX_STATE_BYTES})",
     )
     run_options.add_argument(
+        "--concurrency",
+        type=positive_int,
+        default=DEFAULT_CONCURRENCY,
+        help=f"calls in flight at once (default: {DEFAULT_CONCURRENCY})",
+    )
+    run_options.add_argument(
         "--debug", action="store_true", help="log what is sent, including item text"
     )
 
@@ -125,7 +132,15 @@ def cmd_presets(args: argparse.Namespace, backend_factory: BackendFactory) -> in
 def cmd_ask(args: argparse.Namespace, backend_factory: BackendFactory) -> int:
     preset, items = load_run_inputs(args)
     backend = backend_factory(os.environ)
-    result = run(backend, preset, items, args.threshold, args.max_bytes, args.debug)
+    result = run(
+        backend,
+        preset,
+        items,
+        threshold=args.threshold,
+        max_state_bytes=args.max_bytes,
+        concurrency=args.concurrency,
+        debug=args.debug,
+    )
     write_jsonl(
         Path(args.out), [r.to_json(with_text=r.bucket == NEEDS_REVIEW) for r in result.items]
     )
@@ -144,6 +159,7 @@ def cmd_triage(args: argparse.Namespace, backend_factory: BackendFactory) -> int
         audit_rate=args.audit_rate,
         seed=args.seed,
         max_state_bytes=args.max_bytes,
+        concurrency=args.concurrency,
         debug=args.debug,
     )
     out = Path(args.out)

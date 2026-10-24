@@ -11,6 +11,9 @@ import json
 import logging
 import math
 import random
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -26,6 +29,7 @@ NEEDS_REVIEW = "needs_review"
 # slower, less accurate long-context mode. See docs/jev-api-notes.md.
 DEFAULT_MAX_STATE_BYTES = 32_000
 DEFAULT_AUDIT_RATE = 0.05
+DEFAULT_CONCURRENCY = 8
 
 _ITEM_KEYS = {"id", "text", "meta"}
 
@@ -75,6 +79,8 @@ class RunResult:
     items: list[ItemResult]
     usage: CostTally
     models: set[str]
+    concurrency: int
+    seconds: float = 0.0
 
     def in_bucket(self, bucket: str) -> list[ItemResult]:
         return [r for r in self.items if r.bucket == bucket]
@@ -87,6 +93,8 @@ class RunResult:
             "models": sorted(self.models),
             "threshold": self.threshold,
             "max_state_bytes": self.max_state_bytes,
+            "concurrency": self.concurrency,
+            "seconds": self.seconds,
             "items": len(self.items),
             CONFIDENT: len(self.in_bucket(CONFIDENT)),
             NEEDS_REVIEW: len(self.in_bucket(NEEDS_REVIEW)),
@@ -142,11 +150,13 @@ def run(
     items: list[dict],
     threshold: float | None = None,
     max_state_bytes: int = DEFAULT_MAX_STATE_BYTES,
+    concurrency: int = DEFAULT_CONCURRENCY,
     debug: bool = False,
 ) -> RunResult:
-    """Ask about every item. A failed item goes to review; the rest carry on.
+    """Ask about every item, several at a time. Results keep the input order.
 
-    A FatalBackendError, like a rejected key, stops the run and is raised.
+    A failed item goes to review and the rest carry on. A FatalBackendError, like
+    a rejected key, stops the run and is raised; items not yet sent never are.
     """
     if threshold is None:
         threshold = preset.threshold
@@ -158,15 +168,38 @@ def run(
         items=[],
         usage=CostTally(),
         models=set(),
+        concurrency=concurrency,
     )
-    for item in items:
-        item_result, decision = ask_one(backend, preset, item, threshold, max_state_bytes, debug)
-        if decision is not None:
-            result.usage.add(decision.usage)
-            result.models.add(decision.model)
-        if item_result.error is not None:
-            log.warning("item %r: %s", item["id"], item_result.error)
-        result.items.append(item_result)
+    stop = threading.Event()
+
+    def ask(item: dict) -> tuple[ItemResult, Decision | None] | None:
+        if stop.is_set():
+            return None
+        try:
+            return ask_one(backend, preset, item, threshold, max_state_bytes, debug)
+        except FatalBackendError:
+            stop.set()
+            raise
+
+    started = time.monotonic()
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = [pool.submit(ask, item) for item in items]
+        try:
+            # The pool starts items in order, so every item before a fatal one was
+            # started before the stop and has a real result.
+            for item, future in zip(items, futures, strict=True):
+                item_result, decision = future.result()
+                if decision is not None:
+                    result.usage.add(decision.usage)
+                    result.models.add(decision.model)
+                if item_result.error is not None:
+                    log.warning("item %r: %s", item["id"], item_result.error)
+                result.items.append(item_result)
+        except FatalBackendError:
+            for pending in futures:
+                pending.cancel()
+            raise
+    result.seconds = round(time.monotonic() - started, 3)
     return result
 
 
@@ -230,6 +263,7 @@ def triage(
     audit_rate: float = DEFAULT_AUDIT_RATE,
     seed: int | None = None,
     max_state_bytes: int = DEFAULT_MAX_STATE_BYTES,
+    concurrency: int = DEFAULT_CONCURRENCY,
     debug: bool = False,
 ) -> TriageResult:
     """Run every item, then sample confident ones for audit.
@@ -239,7 +273,15 @@ def triage(
     """
     if seed is None:
         seed = random.SystemRandom().randrange(2**32)
-    result = run(backend, preset, items, threshold, max_state_bytes, debug)
+    result = run(
+        backend,
+        preset,
+        items,
+        threshold=threshold,
+        max_state_bytes=max_state_bytes,
+        concurrency=concurrency,
+        debug=debug,
+    )
     confident = result.in_bucket(CONFIDENT)
     audit = sample_audit(confident, audit_rate, seed)
     summary = result.summary()
