@@ -1,0 +1,198 @@
+"""Ask Jev about each item and sort the items by how sure it was.
+
+Each item gets one call with all of the preset's questions. Its confidence is
+the lowest confidence across those questions, so one unsure answer is enough to
+send it to review. Items at or above the threshold are confident.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+from jab_triage.backends.base import Answer, Backend, BackendError, Decision
+from jab_triage.cost import CostTally
+from jab_triage.presets import Preset, render_state
+
+CONFIDENT = "confident"
+NEEDS_REVIEW = "needs_review"
+
+# Above roughly this many bytes of text, OpenRouter sends Jev requests to the
+# slower, less accurate long-context mode. See docs/jev-api-notes.md.
+DEFAULT_MAX_STATE_BYTES = 32_000
+
+_ITEM_KEYS = {"id", "text", "meta"}
+
+log = logging.getLogger(__name__)
+
+
+class InputError(ValueError):
+    pass
+
+
+@dataclass
+class ItemResult:
+    id: Any
+    answers: dict[str, dict] | None
+    confidence: float | None
+    bucket: str
+    error: str | None = None
+
+    def to_json(self) -> dict:
+        line = {
+            "id": self.id,
+            "answers": self.answers,
+            "confidence": self.confidence,
+            "bucket": self.bucket,
+        }
+        if self.error is not None:
+            line["error"] = self.error
+        return line
+
+
+@dataclass
+class RunResult:
+    preset: str
+    backend: str
+    threshold: float
+    max_state_bytes: int
+    items: list[ItemResult]
+    usage: CostTally
+    models: set[str]
+
+    def in_bucket(self, bucket: str) -> list[ItemResult]:
+        return [r for r in self.items if r.bucket == bucket]
+
+    def summary(self) -> dict:
+        return {
+            "date": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "preset": self.preset,
+            "backend": self.backend,
+            "models": sorted(self.models),
+            "threshold": self.threshold,
+            "max_state_bytes": self.max_state_bytes,
+            "items": len(self.items),
+            CONFIDENT: len(self.in_bucket(CONFIDENT)),
+            NEEDS_REVIEW: len(self.in_bucket(NEEDS_REVIEW)),
+            "errors": sum(1 for r in self.items if r.error is not None),
+            "usage": self.usage.to_json(),
+        }
+
+
+def parse_items(data: Any) -> list[dict]:
+    """Check the input is a JSON array of {id, text, meta?} with unique ids.
+
+    Error messages name the item by position and id, never by its text.
+    """
+    if not isinstance(data, list):
+        raise InputError("input must be a JSON array of {id, text, meta?}")
+    seen = set()
+    for index, item in enumerate(data):
+        where = f"item {index}"
+        if not isinstance(item, dict):
+            raise InputError(f"{where}: must be an object")
+        unknown = sorted(set(item) - _ITEM_KEYS)
+        if unknown:
+            raise InputError(f"{where}: unknown keys {', '.join(unknown)}")
+        item_id = item.get("id")
+        if isinstance(item_id, bool) or not isinstance(item_id, (str, int)):
+            raise InputError(f"{where}: id must be a string or an integer")
+        where = f"item {index} (id {item_id!r})"
+        if item_id in seen:
+            raise InputError(f"{where}: duplicate id")
+        seen.add(item_id)
+        if not isinstance(item.get("text"), str):
+            raise InputError(f"{where}: text must be a string")
+        if not isinstance(item.get("meta", {}), dict):
+            raise InputError(f"{where}: meta must be an object")
+    return data
+
+
+def answer_confidence(answer: Answer) -> float:
+    """The API's confidence if it gives one, else the top probability."""
+    if answer.confidence is not None:
+        return answer.confidence
+    return max(answer.probabilities.values())
+
+
+def run(
+    backend: Backend,
+    preset: Preset,
+    items: list[dict],
+    threshold: float | None = None,
+    max_state_bytes: int = DEFAULT_MAX_STATE_BYTES,
+    debug: bool = False,
+) -> RunResult:
+    """Ask about every item. A failed item goes to review; the rest carry on."""
+    if threshold is None:
+        threshold = preset.threshold
+    result = RunResult(
+        preset=preset.name,
+        backend=backend.name,
+        threshold=threshold,
+        max_state_bytes=max_state_bytes,
+        items=[],
+        usage=CostTally(),
+        models=set(),
+    )
+    for item in items:
+        item_result, decision = ask_one(backend, preset, item, threshold, max_state_bytes, debug)
+        if decision is not None:
+            result.usage.add(decision.usage)
+            result.models.add(decision.model)
+        if item_result.error is not None:
+            log.warning("item %r: %s", item["id"], item_result.error)
+        result.items.append(item_result)
+    return result
+
+
+def ask_one(
+    backend: Backend,
+    preset: Preset,
+    item: dict,
+    threshold: float,
+    max_state_bytes: int,
+    debug: bool = False,
+) -> tuple[ItemResult, Decision | None]:
+    """Ask about one item. Returns the decision too, if a call was made, for its usage."""
+    state = render_state(preset.state_template, item)
+    size = _state_bytes(state)
+    if size > max_state_bytes:
+        return _failed(
+            item, f"state is {size} bytes, over the {max_state_bytes} limit; not sent"
+        ), None
+    if debug:
+        log.debug("item %r state: %s", item["id"], json.dumps(state, ensure_ascii=False))
+
+    try:
+        decision = backend.decide(state, preset.questions)
+    except BackendError as exc:
+        return _failed(item, str(exc)), None
+    except Exception as exc:
+        # The message of an unexpected error could include item text, so only its type is kept.
+        return _failed(item, f"unexpected {type(exc).__name__} from backend"), None
+
+    answers = {}
+    for question in preset.questions:
+        answer = decision.answers.get(question.id)
+        if answer is None:
+            return _failed(item, f"no answer for question {question.id!r}"), decision
+        if answer.confidence is None and not answer.probabilities:
+            return _failed(item, f"no confidence for question {question.id!r}"), decision
+        answers[question.id] = {"value": answer.value, "confidence": answer_confidence(answer)}
+
+    confidence = min(a["confidence"] for a in answers.values())
+    bucket = CONFIDENT if confidence >= threshold else NEEDS_REVIEW
+    return ItemResult(item["id"], answers, confidence, bucket), decision
+
+
+def _failed(item: dict, error: str) -> ItemResult:
+    return ItemResult(item["id"], None, None, NEEDS_REVIEW, error)
+
+
+def _state_bytes(state: Any) -> int:
+    text = state if isinstance(state, str) else json.dumps(state, ensure_ascii=False)
+    return len(text.encode("utf-8"))
