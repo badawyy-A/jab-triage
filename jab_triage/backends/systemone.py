@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
+import random
+import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -41,6 +45,17 @@ ENDPOINTS = {
 # The model that actually answered is read from each response.
 DEFAULT_MODEL = "jev-latest"
 DEFAULT_TIMEOUT = 30.0
+
+# Retries for rate limits, server errors and network failures, with backoff
+# that doubles from BACKOFF_BASE up to BACKOFF_CAP seconds, plus jitter.
+MAX_ATTEMPTS = 4
+BACKOFF_BASE = 0.5
+BACKOFF_CAP = 8.0
+# A Retry-After longer than this is cut down to it, so one header cannot stall a run.
+MAX_RETRY_AFTER = 60.0
+RETRY_STATUSES = {408, 429} | set(range(500, 600))
+
+log = logging.getLogger(__name__)
 
 # (status, headers, body). Swapped out in tests so they never make a real call.
 Transport = Callable[[str, dict[str, str], bytes, float], tuple[int, Mapping[str, str], bytes]]
@@ -77,14 +92,21 @@ class SystemOneBackend(Backend):
         model: str = DEFAULT_MODEL,
         timeout: float = DEFAULT_TIMEOUT,
         transport: Transport = urllib_post,
+        sleep: Callable[[float], None] = time.sleep,
+        max_attempts: int = MAX_ATTEMPTS,
     ):
         self.name = name
         self.destination = endpoint.url
         self.model = model
         self.timeout = timeout
+        self.max_attempts = max_attempts
         self._key_var = endpoint.key_var
         self._api_key = api_key
         self._transport = transport
+        self._sleep = sleep
+        # After a 429, every thread using this backend waits until this time.
+        self._pause_lock = threading.Lock()
+        self._resume_at = 0.0
 
     def __repr__(self) -> str:
         # Spelled out so the key can never show up in a traceback or a log.
@@ -109,16 +131,53 @@ class SystemOneBackend(Backend):
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
-        try:
-            status, _, payload = self._transport(self.destination, headers, body, self.timeout)
-        except (OSError, http.client.HTTPException) as exc:
-            # The exception text can include the URL but never the key or body.
-            raise BackendError(
-                f"network error talking to {self.name} ({type(exc).__name__})"
-            ) from exc
-        if 200 <= status < 300:
-            return payload
-        raise self._status_error(status, payload)
+        for attempt in range(1, self.max_attempts + 1):
+            self._wait_if_paused()
+            rate_limited = False
+            try:
+                status, reply_headers, payload = self._transport(
+                    self.destination, headers, body, self.timeout
+                )
+            except (OSError, http.client.HTTPException) as exc:
+                # Only the type: the exception text is not ours to vouch for.
+                problem = f"network error ({type(exc).__name__})"
+                delay = self._backoff(attempt)
+            else:
+                if 200 <= status < 300:
+                    return payload
+                if status not in RETRY_STATUSES:
+                    raise self._status_error(status, payload)
+                problem = f"HTTP {status}"
+                rate_limited = status == 429
+                delay = retry_after(reply_headers)
+                if delay is None:
+                    delay = self._backoff(attempt)
+            if attempt == self.max_attempts:
+                break
+            log.info("%s from %s, retrying in %.1fs", problem, self.name, delay)
+            if rate_limited:
+                # Waited out at the top of the loop, by this thread and all the others.
+                self._pause_all(delay)
+            else:
+                self._sleep(delay)
+        raise BackendError(
+            f"{problem} from {self.name}, gave up after {self.max_attempts} attempts"
+        )
+
+    def _backoff(self, attempt: int) -> float:
+        # Half fixed, half random, so threads that failed together do not retry together.
+        ceiling = min(BACKOFF_CAP, BACKOFF_BASE * 2 ** (attempt - 1))
+        return ceiling / 2 + random.uniform(0, ceiling / 2)
+
+    def _pause_all(self, seconds: float) -> None:
+        with self._pause_lock:
+            self._resume_at = max(self._resume_at, time.monotonic() + seconds)
+
+    def _wait_if_paused(self) -> None:
+        with self._pause_lock:
+            remaining = self._resume_at - time.monotonic()
+        if remaining > 0:
+            self._sleep(remaining)
 
     def _status_error(self, status: int, payload: bytes) -> BackendError:
         """Turn an error status into a message that never repeats the response body,
@@ -142,6 +201,22 @@ class SystemOneBackend(Backend):
         if status == 413:
             return BackendError(f"{where}: request body too large")
         return BackendError(where)
+
+
+def retry_after(headers: Mapping[str, str]) -> float | None:
+    """Seconds to wait from retry-after-ms or Retry-After, if the server sent one.
+    An HTTP date in Retry-After is ignored and our own backoff is used instead."""
+    lowered = {key.lower(): value for key, value in headers.items()}
+    try:
+        if "retry-after-ms" in lowered:
+            seconds = float(lowered["retry-after-ms"]) / 1000
+        elif "retry-after" in lowered:
+            seconds = float(lowered["retry-after"])
+        else:
+            return None
+    except ValueError:
+        return None
+    return min(max(seconds, 0.0), MAX_RETRY_AFTER)
 
 
 def question_payload(question: Question) -> dict:

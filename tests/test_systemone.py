@@ -11,6 +11,7 @@ from jab_triage.backends.systemone import (
     ENDPOINTS,
     SystemOneBackend,
     factory,
+    retry_after,
 )
 from jab_triage.presets import Question
 
@@ -51,6 +52,7 @@ class FakeTransport:
     def __init__(self, *replies):
         self.replies = list(replies)
         self.requests = []
+        self.headers = {}
 
     def __call__(self, url, headers, body, timeout):
         self.requests.append({"url": url, "headers": headers, "body": json.loads(body)})
@@ -58,7 +60,7 @@ class FakeTransport:
         if isinstance(reply, Exception):
             raise reply
         status, payload = reply
-        return status, {}, payload
+        return status, self.headers, payload
 
 
 def backend(*replies, name="openrouter"):
@@ -220,3 +222,95 @@ def test_factory_reads_key_and_model_from_env():
 def test_factory_without_key_is_a_clear_error():
     with pytest.raises(BackendError, match="OPENROUTER_API_KEY is not set"):
         factory("openrouter")({})
+
+
+def retrying_backend(*replies):
+    """A backend whose sleeps are recorded instead of slept."""
+    slept = []
+    transport = FakeTransport(*replies)
+    b = SystemOneBackend(
+        "openrouter", ENDPOINTS["openrouter"], KEY, transport=transport, sleep=slept.append
+    )
+    return b, transport, slept
+
+
+@pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 524, 529])
+def test_retries_transient_statuses(status):
+    b, transport, slept = retrying_backend((status, b"{}"), (200, response()))
+    assert b.decide("state", QUESTIONS).model == "typesafe/jev-1.14-20261014"
+    assert len(transport.requests) == 2
+    assert len(slept) == 1
+
+
+def test_retries_network_errors():
+    b, transport, _ = retrying_backend(TimeoutError("timed out"), (200, response()))
+    b.decide("state", QUESTIONS)
+    assert len(transport.requests) == 2
+
+
+def test_gives_up_after_max_attempts():
+    replies = [(503, b"private item text")] * 4
+    b, transport, slept = retrying_backend(*replies)
+    with pytest.raises(BackendError) as exc:
+        b.decide("state", QUESTIONS)
+    assert str(exc.value) == "HTTP 503 from openrouter, gave up after 4 attempts"
+    assert len(transport.requests) == 4
+    assert len(slept) == 3
+
+
+def test_network_error_message_keeps_only_the_type():
+    b, _, _ = retrying_backend(*[OSError("connect to private host failed")] * 4)
+    with pytest.raises(BackendError) as exc:
+        b.decide("state", QUESTIONS)
+    assert "network error (OSError)" in str(exc.value)
+    assert "private" not in str(exc.value)
+
+
+def test_does_not_retry_client_errors():
+    b, transport, slept = retrying_backend((400, b"{}"))
+    with pytest.raises(BackendError):
+        b.decide("state", QUESTIONS)
+    assert len(transport.requests) == 1
+    assert slept == []
+
+
+def test_backoff_grows_and_stays_under_the_cap():
+    b, _, slept = retrying_backend(*[(500, b"{}")] * 4)
+    with pytest.raises(BackendError):
+        b.decide("state", QUESTIONS)
+    # Each delay is between half and all of 0.5, 1 and 2 seconds.
+    for delay, ceiling in zip(slept, [0.5, 1.0, 2.0], strict=True):
+        assert ceiling / 2 <= delay <= ceiling
+
+
+def test_honours_retry_after():
+    b, transport, slept = retrying_backend((500, b"{}"), (200, response()))
+    transport.headers = {"Retry-After": "3"}
+    b.decide("state", QUESTIONS)
+    assert slept == [3.0]
+
+
+def test_rate_limit_pauses_later_calls_too():
+    b, transport, slept = retrying_backend((429, b"{}"), (200, response()), (200, response()))
+    transport.headers = {"retry-after-ms": "2000"}
+    b.decide("state", QUESTIONS)
+    b.decide("state", QUESTIONS)
+    # The sleep function is fake, so no time passes: the second call still sees
+    # the pause the first one set, which is how other threads would see it.
+    assert len(slept) == 2
+    assert all(1.9 < s <= 2.0 for s in slept)
+
+
+@pytest.mark.parametrize(
+    "headers, expected",
+    [
+        ({}, None),
+        ({"Retry-After": "5"}, 5.0),
+        ({"retry-after-ms": "250"}, 0.25),
+        ({"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}, None),
+        ({"Retry-After": "3600"}, 60.0),
+        ({"Retry-After": "-1"}, 0.0),
+    ],
+)
+def test_retry_after_parsing(headers, expected):
+    assert retry_after(headers) == expected
