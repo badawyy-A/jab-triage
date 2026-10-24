@@ -24,8 +24,8 @@ from jab_triage.presets import (
 from jab_triage.triage import (
     DEFAULT_AUDIT_RATE,
     DEFAULT_MAX_STATE_BYTES,
+    NEEDS_REVIEW,
     InputError,
-    ItemResult,
     parse_items,
     run,
     triage,
@@ -126,7 +126,9 @@ def cmd_ask(args: argparse.Namespace, backend_factory: BackendFactory) -> int:
     preset, items = load_run_inputs(args)
     backend = backend_factory(os.environ)
     result = run(backend, preset, items, args.threshold, args.max_bytes, args.debug)
-    write_jsonl(Path(args.out), result.items)
+    write_jsonl(
+        Path(args.out), [r.to_json(with_text=r.bucket == NEEDS_REVIEW) for r in result.items]
+    )
     print(json.dumps(result.summary(), indent=2))
     return 0
 
@@ -146,9 +148,12 @@ def cmd_triage(args: argparse.Namespace, backend_factory: BackendFactory) -> int
     )
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    write_jsonl(out / "confident.jsonl", result.confident)
-    write_jsonl(out / "needs_review.jsonl", result.needs_review)
-    write_jsonl(out / "audit.jsonl", result.audit)
+    # Confident lines stay short; the agent reads review and audit lines in full.
+    write_jsonl(out / "confident.jsonl", [r.to_json() for r in result.confident])
+    write_jsonl(
+        out / "needs_review.jsonl", [r.to_json(with_text=True) for r in result.needs_review]
+    )
+    write_jsonl(out / "audit.jsonl", [r.to_json(with_text=True) for r in result.audit])
     summary = json.dumps(result.summary, indent=2)
     (out / "summary.json").write_text(summary + "\n", encoding="utf-8")
     print(summary)
@@ -181,10 +186,10 @@ def load_run_inputs(args: argparse.Namespace) -> tuple[Preset, list[dict]]:
     return preset, parse_items(data)
 
 
-def write_jsonl(path: Path, results: list[ItemResult]) -> None:
+def write_jsonl(path: Path, lines: list[dict]) -> None:
     with path.open("w", encoding="utf-8") as f:
-        for result in results:
-            f.write(json.dumps(result.to_json(), ensure_ascii=False) + "\n")
+        for line in lines:
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
 def unit_interval(value: str) -> float:

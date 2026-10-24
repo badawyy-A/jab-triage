@@ -79,13 +79,17 @@ def test_triage_writes_all_four_files(workspace, capsys):
     assert len(confident) == 8
     assert len(needs_review) == 2
     assert len(audit) == 1
-    assert audit[0] in confident
+    assert audit[0]["id"] in {line["id"] for line in confident}
+    # Confident lines leave the text out. Review and audit lines carry it, so the
+    # agent does not have to open the input file.
     assert confident[0] == {
         "id": 0,
         "answers": {"kind": {"value": "bug", "confidence": 0.9}},
         "confidence": 0.9,
         "bucket": "confident",
     }
+    assert needs_review[0]["text"] == "issue 8"
+    assert audit[0]["text"] == texts[audit[0]["id"]]
     assert summary["seed"] == 1
     assert json.loads(capsys.readouterr().out) == summary
 
@@ -96,7 +100,11 @@ def test_ask_writes_one_results_file(workspace, capsys):
     script = {"a": {"kind": ("bug", 0.9)}, "b": {"kind": ("feature", 0.5)}}
     args = ["ask", "--preset", "kinds", "--input", str(items), "--out", str(out)]
     assert cli.main(args, stub_factory(script)) == 0
-    assert [r["bucket"] for r in read_jsonl(out)] == ["confident", "needs_review"]
+    confident, review = read_jsonl(out)
+    assert confident["bucket"] == "confident"
+    assert "text" not in confident
+    assert review["bucket"] == "needs_review"
+    assert review["text"] == "b"
 
 
 def test_preset_can_be_a_path(workspace, tmp_path, capsys):
@@ -147,8 +155,8 @@ def test_item_text_stays_out_of_output_without_debug(workspace, capsys):
     captured = capsys.readouterr()
     assert "HTTP 500" in captured.err
     assert "private" not in captured.out + captured.err
-    for path in out.iterdir():
-        assert "private" not in path.read_text()
+    assert "private" not in (out / "summary.json").read_text()
+    assert "private" not in (out / "confident.jsonl").read_text()
 
 
 def test_debug_logs_item_text(workspace, capsys):

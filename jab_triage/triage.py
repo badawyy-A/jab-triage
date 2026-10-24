@@ -38,13 +38,19 @@ class InputError(ValueError):
 
 @dataclass
 class ItemResult:
-    id: Any
+    item: dict
     answers: dict[str, dict] | None
     confidence: float | None
     bucket: str
     error: str | None = None
 
-    def to_json(self) -> dict:
+    @property
+    def id(self) -> Any:
+        return self.item["id"]
+
+    def to_json(self, with_text: bool = False) -> dict:
+        """One output line. with_text adds the item's text and meta, for lines the
+        agent has to read anyway, so it never needs to open the whole input file."""
         line = {
             "id": self.id,
             "answers": self.answers,
@@ -53,6 +59,10 @@ class ItemResult:
         }
         if self.error is not None:
             line["error"] = self.error
+        if with_text:
+            line["text"] = self.item["text"]
+            if self.item.get("meta"):
+                line["meta"] = self.item["meta"]
         return line
 
 
@@ -189,7 +199,7 @@ def ask_one(
 
     confidence = min(a["confidence"] for a in answers.values())
     bucket = CONFIDENT if confidence >= threshold else NEEDS_REVIEW
-    return ItemResult(item["id"], answers, confidence, bucket), decision
+    return ItemResult(item, answers, confidence, bucket), decision
 
 
 @dataclass
@@ -245,7 +255,7 @@ def sample_audit(confident: list, rate: float, seed: int) -> list:
 
 
 def _failed(item: dict, error: str) -> ItemResult:
-    return ItemResult(item["id"], None, None, NEEDS_REVIEW, error)
+    return ItemResult(item, None, None, NEEDS_REVIEW, error)
 
 
 def _state_bytes(state: Any) -> int:

@@ -172,3 +172,13 @@ def test_parse_items_error_does_not_include_text():
     with pytest.raises(InputError) as exc:
         parse_items([{"id": 1, "text": "private words"}, {"id": 1, "text": "more private"}])
     assert "private" not in str(exc.value)
+
+
+def test_to_json_with_text_adds_text_and_meta():
+    data = [{"id": "a", "text": "x", "meta": {"title": "T"}}, {"id": "b", "text": "y"}]
+    backend = ScriptedBackend({"x": {"kind": ("bug", 0.9), "dup": (0.9,)}, "y": {}})
+    with_meta, without_meta = run(backend, PRESET, data).items
+    assert "text" not in with_meta.to_json()
+    assert with_meta.to_json(with_text=True)["meta"] == {"title": "T"}
+    assert without_meta.to_json(with_text=True)["text"] == "y"
+    assert "meta" not in without_meta.to_json(with_text=True)
