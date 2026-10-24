@@ -11,8 +11,9 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from jab_triage import __version__
-from jab_triage.backends import KEY_VARS, from_env
+from jab_triage.backends import from_env
 from jab_triage.backends.base import Backend, BackendError
+from jab_triage.backends.systemone import DEFAULT_MODEL, ENDPOINTS
 from jab_triage.presets import (
     PRESETS_DIR,
     Preset,
@@ -125,9 +126,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def cmd_status(args: argparse.Namespace, backend_factory: BackendFactory) -> int:
-    print(f"backend: {os.environ.get('JEV_BACKEND') or 'not set'}")
-    for var in KEY_VARS.values():
-        print(f"{var}: {'set' if os.environ.get(var) else 'not set'}")
+    name = os.environ.get("JEV_BACKEND", "").strip()
+    endpoint = ENDPOINTS.get(name)
+    if endpoint:
+        print(f"backend: {name}, sending to {endpoint.url}")
+    elif name:
+        print(f"backend: {name!r} is not known; choose one of {', '.join(ENDPOINTS)}")
+    else:
+        print(f"backend: not set; set JEV_BACKEND to one of {', '.join(ENDPOINTS)}")
+    model = os.environ.get("JEV_MODEL", "").strip()
+    print(f"model: {model}" if model else f"model: {DEFAULT_MODEL} (default)")
+    for endpoint in ENDPOINTS.values():
+        print(f"{endpoint.key_var}: {'set' if os.environ.get(endpoint.key_var) else 'not set'}")
     print(f"presets in {PRESETS_DIR}:")
     print_presets()
     return 0

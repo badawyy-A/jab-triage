@@ -12,9 +12,6 @@ BACKENDS: dict[str, Callable[[Mapping[str, str]], Backend]] = {
     name: systemone.factory(name) for name in systemone.ENDPOINTS
 }
 
-# The environment variable each backend reads its key from.
-KEY_VARS = {name: endpoint.key_var for name, endpoint in systemone.ENDPOINTS.items()}
-
 
 def from_env(env: Mapping[str, str]) -> Backend:
     name = env.get("JEV_BACKEND", "").strip()

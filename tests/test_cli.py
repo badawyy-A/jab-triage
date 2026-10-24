@@ -21,7 +21,7 @@ def workspace(tmp_path, monkeypatch):
     presets_dir.mkdir()
     (presets_dir / "kinds.json").write_text(json.dumps(PRESET), encoding="utf-8")
     monkeypatch.setattr(cli, "PRESETS_DIR", presets_dir)
-    for var in ("JEV_BACKEND", "OPENROUTER_API_KEY", "TYPESAFE_API_KEY"):
+    for var in ("JEV_BACKEND", "JEV_MODEL", "OPENROUTER_API_KEY", "TYPESAFE_API_KEY"):
         monkeypatch.delenv(var, raising=False)
     return tmp_path
 
@@ -45,7 +45,8 @@ def test_status_never_shows_the_key(workspace, monkeypatch, capsys):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-very-secret")
     assert cli.main(["status"]) == 0
     out = capsys.readouterr().out
-    assert "backend: openrouter" in out
+    assert "backend: openrouter, sending to https://openrouter.ai/api/v1/systemone" in out
+    assert "model: jev-latest (default)" in out
     assert "OPENROUTER_API_KEY: set" in out
     assert "TYPESAFE_API_KEY: not set" in out
     assert "kinds: Example preset for tests." in out
@@ -253,3 +254,12 @@ def test_empty_input_needs_no_confirmation(workspace, capsys):
     args = ["triage", "--preset", "kinds", "--input", str(items), "--out", str(out)]
     assert cli.main(args, stub_factory({})) == 0
     assert (out / "summary.json").exists()
+
+
+def test_status_with_pinned_model_and_unknown_backend(workspace, monkeypatch, capsys):
+    monkeypatch.setenv("JEV_BACKEND", "nope")
+    monkeypatch.setenv("JEV_MODEL", "jev-1.14.0")
+    assert cli.main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "backend: 'nope' is not known" in out
+    assert "model: jev-1.14.0" in out
