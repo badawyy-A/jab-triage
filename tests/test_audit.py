@@ -23,7 +23,7 @@ def test_sample_keeps_input_order_and_is_a_subset():
 
 @pytest.mark.parametrize(
     "n, rate, expected",
-    [(100, 0.05, 5), (60, 0.05, 3), (19, 0.05, 1), (1, 0.05, 1), (10, 1.0, 10), (10, 0, 0)],
+    [(100, 0.05, 5), (100, 0.07, 7), (19, 0.05, 1), (1, 0.05, 1), (10, 1.0, 10), (10, 0, 0)],
 )
 def test_sample_size_rounds_up(n, rate, expected):
     assert len(sample_audit(list(range(n)), rate, seed=0)) == expected

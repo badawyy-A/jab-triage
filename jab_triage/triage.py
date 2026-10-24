@@ -238,7 +238,7 @@ def sample_audit(confident: list, rate: float, seed: int) -> list:
     """
     if not confident or rate <= 0:
         return []
-    # Round before ceil so that 60 * 0.05, which is 3.0000000000000004 in floats, gives 3.
+    # Round before ceil so that 100 * 0.07, which is 7.000000000000001 in floats, gives 7.
     k = min(len(confident), math.ceil(round(len(confident) * rate, 9)))
     chosen = sorted(random.Random(seed).sample(range(len(confident)), k))
     return [confident[i] for i in chosen]
