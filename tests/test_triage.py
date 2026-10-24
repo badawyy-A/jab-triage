@@ -182,3 +182,13 @@ def test_to_json_with_text_adds_text_and_meta():
     assert with_meta.to_json(with_text=True)["meta"] == {"title": "T"}
     assert without_meta.to_json(with_text=True)["text"] == "y"
     assert "meta" not in without_meta.to_json(with_text=True)
+
+
+def test_confidence_is_rounded_before_bucketing():
+    # 1 - 0.30001 is 0.69999 in exact terms; rounded to four places it is 0.7.
+    _, result = run_script({"a": {"kind": ("bug", 0.9), "dup": (0.30001,)}}, ["a"])
+    assert result.items[0].confidence == 0.7
+    assert result.items[0].bucket == CONFIDENT
+    # 1 - 0.33 is 0.6699999999999999 in floats.
+    _, result = run_script({"a": {"kind": ("bug", 0.9), "dup": (0.33,)}}, ["a"])
+    assert result.items[0].answers["dup"]["confidence"] == 0.67

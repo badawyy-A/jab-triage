@@ -125,10 +125,15 @@ def parse_items(data: Any) -> list[dict]:
 
 
 def answer_confidence(answer: Answer) -> float:
-    """The API's confidence if it gives one, else the top probability."""
+    """The API's confidence if it gives one, else the top probability.
+
+    Rounded to four places before it is compared with the threshold, so the
+    number in the output is the one the bucket was decided on, and float noise
+    like 1 - 0.33 = 0.6699999999999999 does not end up in what the agent reads.
+    """
     if answer.confidence is not None:
-        return answer.confidence
-    return max(answer.probabilities.values())
+        return round(answer.confidence, 4)
+    return round(max(answer.probabilities.values()), 4)
 
 
 def run(
