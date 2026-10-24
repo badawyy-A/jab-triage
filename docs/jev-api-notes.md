@@ -12,6 +12,8 @@ documented it says "unknown". Nothing here was tested against the live API yet.
   to it. On OpenRouter the alias is `~typesafe/jev-latest`.
 - The response's `model` field names the model that actually answered. It can differ from the name
   or alias sent. We record it per run.
+- jab sends `jev-latest` by default. Both services accept that alias. Set `JEV_MODEL` to pin a
+  version, for example `jev-1.14.0` on TypeSafe or `typesafe/jev-1.14` on OpenRouter.
 - Probabilities differ between models on the same question, so a threshold tuned on one version
   has to be tuned again on another (OpenRouter's Jev guide says this directly).
 
@@ -26,8 +28,9 @@ Both services use the same request and response shape.
 
 - Auth on both is `Authorization: Bearer <key>`.
 - OpenRouter also has an alpha `POST /api/alpha/decisions` endpoint. Its schema in the reference is
-  identical to `/api/v1/systemone`. We should use `/api/v1/systemone`, which is the non-alpha one
-  and the one TypeSafe's own SDKs talk to.
+  identical to `/api/v1/systemone`. We use `/api/v1/systemone`, which is the non-alpha one and the
+  one TypeSafe's own SDKs talk to.
+- Because the shapes match, one backend class serves both, with a different URL and key.
 - OpenRouter accepts bare names like `jev-1.13` and maps them to `typesafe/jev-1.13`.
 
 ## Request
@@ -150,9 +153,10 @@ From the primitives pages and the jev-1.13 limitations page.
 - Phrase a noul so a high value means yes. Ask one condition per noul.
 - Keep instructions and criteria consistent with each other.
 
-## Known weaknesses of jev-1.13
+## Known weaknesses
 
-From TypeSafe's jev-1.13 limitations page, shortened:
+TypeSafe has a limitations page for jev-1.13 only. Nothing is documented for jev-1.14 yet, so
+assume these still apply until measured. Shortened:
 
 - Answers the literal question, not the intent.
 - Weak at arithmetic, counting, dates and non-decimal numbers like hex. Do those in code.
@@ -170,4 +174,5 @@ From TypeSafe's jev-1.13 limitations page, shortened:
 - Whether confidence is calibrated.
 - How long either service keeps request data. Neither Jev page covers data retention.
 - Whether OpenRouter always includes `usage.cost` for Jev. It is optional in the schema.
-- Which context limit OpenRouter actually applies to jev-1.13 without long-context mode.
+- Which context limit OpenRouter actually applies without long-context mode.
+- Known weaknesses of jev-1.14.
