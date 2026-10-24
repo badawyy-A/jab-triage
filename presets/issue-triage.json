@@ -1,0 +1,29 @@
+{
+  "name": "issue-triage",
+  "description": "Sort issues by kind: bug, feature, question, docs or other.",
+  "state_template": {"title": "{meta.title}", "body": "{text}"},
+  "threshold": 0.8,
+  "questions": [
+    {
+      "id": "kind",
+      "type": "choice",
+      "prompt": "What kind of issue is this?",
+      "options": {
+        "bug": {
+          "covers": "Existing behaviour is broken: an error, crash, wrong result or regression.",
+          "not": "Asking for new behaviour, or asking how to use something."
+        },
+        "feature": {
+          "covers": "A request for new behaviour, or to change how something works.",
+          "not": "A report that something already there is broken."
+        },
+        "question": {
+          "covers": "Asking how to do something or why it behaves as it does.",
+          "not": "A clear report of broken behaviour."
+        },
+        "docs": "Missing, wrong or unclear documentation.",
+        "other": "Anything else: chores, releases, discussion, spam."
+      }
+    }
+  ]
+}
