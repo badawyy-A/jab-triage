@@ -1,7 +1,7 @@
 import pytest
 
 from jab_triage.backends.base import Usage
-from jab_triage.cost import CostTally
+from jab_triage.cost import INPUT_PRICE_PER_MILLION, CostTally
 
 
 def test_sums_tokens_and_reported_cost():
@@ -22,18 +22,18 @@ def test_no_calls_costs_nothing():
     assert summary["cost_usd"] == 0.0
 
 
-def test_cost_missing_from_every_call():
+def test_cost_computed_from_price_when_not_reported():
     tally = CostTally()
-    tally.add(Usage(100, 10))
+    tally.add(Usage(1_000_000, 10))
     summary = tally.to_json()
-    assert summary["cost_usd"] is None
-    assert summary["cost_source"] == "not reported by api"
+    assert summary["cost_usd"] == pytest.approx(INPUT_PRICE_PER_MILLION)
+    assert summary["cost_source"].startswith("computed from the documented price")
 
 
-def test_partial_cost_gives_no_total():
+def test_partial_cost_fills_the_gap_from_price():
     tally = CostTally()
     tally.add(Usage(100, 10, 0.001))
-    tally.add(Usage(100, 10))
+    tally.add(Usage(1_000_000, 10))
     summary = tally.to_json()
-    assert summary["cost_usd"] is None
-    assert summary["cost_source"] == "reported for 1 of 2 calls"
+    assert summary["cost_usd"] == pytest.approx(0.001 + INPUT_PRICE_PER_MILLION)
+    assert summary["cost_source"].startswith("reported by api for 1 of 2 calls")
